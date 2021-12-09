@@ -171,6 +171,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("Server %d: got RequestVote from candidate %d, args: %+v, current currentTerm: %d, current log: %v\n", rf.me, args.CandidateId, args, rf.currentTerm, rf.log)
+	// 请求发起的选举任期比当前记录的任期低，不用管
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -194,16 +195,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 				// s1, s2, s3的term分别为1, 2, 2, 此时s1开始选举, s2, s3可能因为刚转为Follower所以votefor为空, 因此进入这个判断逻辑
 				// 如果s2, s3都直接同意投票则s1会当选为领导, 那么后续再有添加日志的操作会造成和s2, s3 committed log不一样的情况
 				// 所以在s1选举时就要做好判断！
+				// 当前server的最新log索引值，任期号
 				lastLogIndex := len(rf.log)
 				lastLogTerm := 0
 				if lastLogIndex > 0 {
 					lastLogTerm = rf.log[lastLogIndex-1].Term
 				}
+				// 这个请求投票的server的日志任期号比我的旧，不投给它
 				if args.LastLogTerm < lastLogTerm {
 					reply.Term = rf.currentTerm
 					reply.VoteGranted = false
 				} else {
 					if args.LastLogTerm == lastLogTerm {
+						// 虽然任期号相同，但同任期号的日志项比我少，不投给它
 						if args.LastLogIndex < lastLogIndex {
 							reply.Term = rf.currentTerm
 							reply.VoteGranted = false
@@ -216,6 +220,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 							rf.setGrantVoteCh()
 						}
 					} else {
+						// 任期号比我的大，投任期号大的一票
 						DPrintf("Server %d: grant vote to candidate %d\n", rf.me, args.CandidateId)
 						reply.Term = rf.currentTerm
 						reply.VoteGranted = true

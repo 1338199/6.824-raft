@@ -432,55 +432,78 @@ func TestRejoin2B(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 }
 
+// 2B BackUp测试的完成逻辑
+// 示例的场景如下:
+// 1、五个server的一次正常同步:
+// 所有server commit的logs都为: [1], 1表示任期
+// 2、断开三个，由于大多数服务器宕机了，所以不能执行新的同步
+// 所有server commit的logs不变：[1]
+// 3、所有断开，先恢复之前断开的三个，这三个server添加同步五次日志：
+// 有server1(假定是leader1), server2: [1], server3（假定是leader2）,4,5: [1,2,2,2,2,2]
+// 4、server4，5中又断开一个，由于大多数服务器宕机了，所以不能执行新的同步
+// 所有server commit的logs不变。
+// 5、全部断开，恢复leader1（server1），server2，和server4，5中的一个，假定是server4，添加和同步5个日志
+// 新leader只能是server4，因为server4提交的日志最新，此时：
+// server4: [1,2,2,2,2,2,3,3,3,3,3],server4同步server1，2时，server4的prevIndex是6，但server1，2还没有6
+// 所以server4下一次发送心跳包会从index为2的logs开始发送。 server1，2就和server4一样。
+// 6、连通所有节点，完成一次日志的添加和同步。新的leader只能从1，2，4中选出，然后去同步3，5。
+// 要做的调整：
+// 1、选举函数RequestVote，选举时投票给任期号最新的server，如果任期号相同，投给同任期号下日志项更多的server
+// 2、AppendEntries函数，考虑follower的logs长度还没有leader的prevIndex大的情况。
 func TestBackup2B(t *testing.T) {
+	// 五个server的raft
 	servers := 5
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2B): leader backs up quickly over incorrect follower logs ...\n")
 
-	//cfg.one(rand.Int(), servers)
+	//一次日志的添加和同步
 	cfg.one(10, servers)
 
 	// put leader and one follower in a partition
+	// 让leader和一个follower形成一个子网络
 	leader1 := cfg.checkOneLeader()
 	DPrintf("================ server %d && %d && %d disconnected!!! ================\n", (leader1+2)%servers, (leader1+3)%servers, (leader1+4)%servers)
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
 
+	// 由于大多数server宕机了，所以不能同步日志
 	// submit lots of commands that won't commit
 	for i := 0; i < 5; i++ {
 		//cfg.rafts[leader1].Start(rand.Int())
 		cfg.rafts[leader1].Start(i)
 	}
-
+	// 把leader和这个server也断开
 	time.Sleep(RaftElectionTimeout / 2)
 	DPrintf("================ server %d && %d disconnected!!! ================\n", (leader1+0)%servers, (leader1+1)%servers)
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
 
+	// 先恢复之前断开的三个server
 	// allow other partition to recover
 	DPrintf("================ server %d && %d && %d reconnected!!! ================\n", (leader1+2)%servers, (leader1+3)%servers, (leader1+4)%servers)
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
-
+	// 这三个server形成的新子网络可以同步更新日志
 	// lots of successful commands to new group.
 	for i := 0; i < 5; i++ {
 		//cfg.one(rand.Int(), 3)
 		cfg.one(i+50, 3)
 	}
-
+	// 新的子网络有新的leader
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
 	other := (leader1 + 2) % servers
 	if leader2 == other {
 		other = (leader2 + 1) % servers
 	}
+	// 再从这个子网络里断开一个server
 	DPrintf("================ server %d disconnected!!! ================\n", other)
 	cfg.disconnect(other)
-
+	// 没有大多数服务器连通了，所以不能进行同步了
 	// lots more commands that won't commit
 	for i := 0; i < 5; i++ {
 		//cfg.rafts[leader2].Start(rand.Int())
@@ -488,30 +511,33 @@ func TestBackup2B(t *testing.T) {
 	}
 
 	time.Sleep(RaftElectionTimeout / 2)
-
+	// 全部断开
 	// bring original leader back to life,
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 	}
+	// leader1和它的follower重新恢复，再把leader2的一个follower恢复
 	DPrintf("================ server %d && %d && %d reconnected!!! ================\n", (leader1+0)%servers, (leader1+1)%servers, other)
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
-
+	// 由于大多数服务器连通了，所以可以正常同步更新日志
 	// lots of successful commands to new group.
 	for i := 0; i < 5; i++ {
 		//cfg.one(rand.Int(), 3)
 		cfg.one(i+150, 3)
 	}
-
+	// 把所有服务器接通
 	// now everyone
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
+	// 能正常同步更新
 	cfg.one(rand.Int(), servers)
 	fmt.Printf("  ... Passed\n")
 }
 
+//
 func TestCount2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false)
