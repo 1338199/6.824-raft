@@ -537,14 +537,17 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 }
 
-//
+// 2B BackUp测试的完成逻辑
+// 希望在leader的选举，日志的同步中没有产生太频繁（正常情况下，超时无效的 RPC 调用不能过多。）或太少的rpc
+// 只要之前的electionTimeOut，heartBeat间隔设置合理就没有问题
 func TestCount2B(t *testing.T) {
+	// 三个server的raft环境
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2B): RPC counts aren't too high ...\n")
-
+	// 计数rpc函数
 	rpcs := func() (n int) {
 		for j := 0; j < servers; j++ {
 			n += cfg.rpcCount(j)
@@ -555,6 +558,7 @@ func TestCount2B(t *testing.T) {
 	leader := cfg.checkOneLeader()
 
 	total1 := rpcs()
+	// rpc太少或太频繁
 	if total1 > 30 || total1 < 1 {
 		t.Fatalf("too many or few RPCs (%v) to elect initial leader\n", total1)
 	}
@@ -562,6 +566,7 @@ func TestCount2B(t *testing.T) {
 	var total2 int
 	var success bool
 loop:
+	// 五轮迭代进行测试，也是希望在同一个leader下
 	for try := 0; try < 5; try++ {
 		if try > 0 {
 			// give solution some time to settle
@@ -573,10 +578,12 @@ loop:
 		iters := 10
 		starti, term, ok := cfg.rafts[leader].Start(1)
 		if !ok {
+			// leader换了
 			// leader moved on really quickly
 			continue
 		}
 		cmds := []int{}
+		// 进行若干次start添加日志
 		for i := 1; i < iters+2; i++ {
 			x := int(rand.Int31())
 			cmds = append(cmds, x)
@@ -593,7 +600,7 @@ loop:
 				t.Fatalf("Start() failed")
 			}
 		}
-
+		// 等待同步完成
 		for i := 1; i < iters+1; i++ {
 			cmd := cfg.wait(starti+i, servers, term)
 			if ix, ok := cmd.(int); ok == false || ix != cmds[i-1] {
@@ -621,6 +628,7 @@ loop:
 		}
 		DPrintf("Total2: %d\n", total2)
 		DPrintf("Total1: %d\n", total1)
+		// rpc太频繁
 		if total2-total1 > (iters+1+3)*3 {
 			t.Fatalf("too many RPCs (%v) for %v entries\n", total2-total1, iters)
 		}
@@ -628,7 +636,7 @@ loop:
 		success = true
 		break
 	}
-
+	// 五轮迭代测试里没有一次term没有变的
 	if !success {
 		t.Fatalf("term changed too often")
 	}
