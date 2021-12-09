@@ -431,11 +431,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					lastNewEntry = len(rf.log)
 				}
 				// 更新follower所知道的最新的提交的日志的索引
+				// 注意只有leader确认了该日志可以被提交，follower才更新自己的commitIndex
+				// 因此follower可能在本次心跳中得到了要添加的logs，但在下一个心跳包里确认leader提交了，
+				// follower才会提交上一次心跳包里的logs
 				if args.LeaderCommit > rf.commitIndex {
 					rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(lastNewEntry)))
 				}
 				rf.persist()
-				// 执行未执行的日志项，执行到最新索引的日志项
+				// 执行和提交未执行的日志项，执行到commitIndex索引的日志项
 				rf.startApplyLogs()
 			}
 		}
@@ -776,15 +779,23 @@ func (rf *Raft) startAppendEntries() {
 							// 那下一个要发给 follower:ii的日志的起始位置就是matchIndex[ii] + 1
 							rf.nextIndex[ii] = rf.matchIndex[ii] + 1
 							// paper中Figure 8的情形, 这个实现很妙!
+							// 拷贝leader的matchIndex列表
+							// matchIndex:leader记录的各个server已提交的最大日志索引
 							copyMatchIndex := make([]int, len(rf.peers))
 							copy(copyMatchIndex, rf.matchIndex)
 							copyMatchIndex[rf.me] = len(rf.log)
+							// 按已经提交的最大日志索引排序
 							sort.Ints(copyMatchIndex)
+							// N：超半数的server已经提交的日志项
 							N := copyMatchIndex[len(rf.peers)/2]
+							// N大于leader已经提交的最大日志项索引
+							// 并且索引为N的日志项和leader的任期号是一致的
+							// leader更新自己要提交的日志索引值
 							if N > rf.commitIndex && rf.log[N-1].Term == rf.currentTerm {
 								rf.commitIndex = N
 							}
 							DPrintf("Leader %d: start applying logs, lastApplied: %d, commitIndex: %d\n", rf.me, rf.lastApplied, rf.commitIndex)
+							// leader执行提交日志项，直到索引为commitIndex的日志
 							rf.startApplyLogs()
 							rf.mu.Unlock()
 							return
@@ -849,6 +860,9 @@ func (rf *Raft) startApplyLogs() {
 	// 执行未执行的cmd，执行到提交的最新的日志
 	for rf.lastApplied < rf.commitIndex {
 		rf.lastApplied++
+		// 所谓执行命令，就是把命令放进rpc的msg，
+		// msg传到config进行记录统计
+		// config.logs[server][index]，记录每个server已经提交的日志项
 		msg := ApplyMsg{}
 		msg.Index = rf.lastApplied
 		msg.Command = rf.log[rf.lastApplied-1].Command

@@ -174,6 +174,14 @@ func TestFailAgree2B(t *testing.T) {
 // 等待2个选举周期，由于大多数follower宕机了，我们不能提交该日志，该日志不应该被现存的follower发现已经提交
 // 恢复follower连接，再给leader添加一条新日志，注意由于宕机的server占大多数，所以新leader可能从宕机的服务器中选出
 // 查看新日志是否被leader添加成功
+// 实现时添加的逻辑是：
+// 1、leader在提交日志之前，要先检查大多数server是否收到了该日志
+// 只有超半数的server都收到了该日志，leader才更新提交的日志的索引，并执行对应的日志
+// 所以函数startAppendEntries需要修改，添加leader收到AppendEntries反馈后的检查
+// 2、同样，follower接收到心跳包后的处理函数AppendEntries也需要进行修改
+// 如果leader发过来的日志leader还没有提交，follower就不更新自己的最新提交的索引号，
+// 等到下一个心跳包如果leader提交了，follower才更新提交的日志索引，执行对应的日志。
+// 本project中执行就是发送包含命令的msg，config通过rpc收到server发过来的msg，记录统计每个server提交的日志项
 func TestFailNoAgree2B(t *testing.T) {
 	// 构建新的raft环境
 	servers := 5
