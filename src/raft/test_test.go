@@ -17,22 +17,35 @@ import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
+//使用心跳超时heartbeat timeout机制来触发 Leader 选举
 const RaftElectionTimeout = 1000 * time.Millisecond
 
+
+//2A Election测试的完成逻辑：
+//1、开启3个服务器，检查能否选举出一个leader
+//2、一个leader掉线，看能否选出一个新的leader
+//3、旧的leader回归，不应该影响新的leader的状态（当然旧leader迅速被重新选举为leader也没问题）
+//4、下线两个服务器，此时不应该有leader
+//5、恢复一个机器，此时有两个机器。应该选举出一个leader
+//6、恢复下线机器，三台服务器同时可用，此时原有leader的状态不应该被影响
+
 func TestInitialElection2A(t *testing.T) {
+//调用Make启动servers个Raft，创建3个服务器，并互相连接，cfg.n指服务器的个数
 	servers := 3
+	//make_config，它创建N个raft节点的实例，并使他们互相连接。
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2A): initial election ...\n")
 
-	// is a leader elected?
-	cfg.checkOneLeader()
+	// is a leader elected?检查是否有leader被选举出来
+	cfg.checkOneLeader()////checkOneLeader，这其实是测试代码的正确性检验的函数，也就是判断当前是否只有一个Leader，这里的GetState函数需要自己去实现，具体实现取决结构体如何设计
 
 	// does the leader+term stay the same if there is no network failure?
-	term1 := cfg.checkTerms()
-	time.Sleep(2 * RaftElectionTimeout)
-	term2 := cfg.checkTerms()
+        // term：Leader对应的任期
+	term1 := cfg.checkTerms()//查看当前term
+	time.Sleep(2 * RaftElectionTimeout)//等待一段时间
+	term2 := cfg.checkTerms()//检查term是否发生改变（用于检测网络正常情况下是否有乱选举的情况）
 	if term1 != term2 {
 		fmt.Printf("warning: term changed even though there were no failures")
 	}
@@ -42,22 +55,23 @@ func TestInitialElection2A(t *testing.T) {
 
 func TestReElection2A(t *testing.T) {
 	servers := 3
+	//make_config，它创建N个raft节点的实例，并使他们互相连接。
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2A): election after network failure ...\n")
-
+        //一个leader掉线，看能否选出一个新的leader
 	leader1 := cfg.checkOneLeader()
 	DPrintf("================ server %d disconnenct!!! ================\n", leader1)
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
-
-	// if the old leader rejoins, that shouldn't
-	// disturb the old leader.
+	
+        //旧的leader回归，不应该影响新的leader的状态（当然旧leader迅速被重新选举为leader也没问题）
 	DPrintf("================ server %d reconnenct!!! ================\n", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	//下线两个服务器，此时不应该有leader
 	// if there's no quorum, no leader should
 	// be elected.
 	DPrintf("================ server %d && %d disconnenct!!! ================\n", leader2, (leader2+1)%servers)
@@ -65,13 +79,11 @@ func TestReElection2A(t *testing.T) {
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
-
-	// if a quorum arises, it should elect a leader.
+        //恢复一个机器，此时有两个机器。应该选举出一个leader
 	DPrintf("================ server %d reconnenct!!! ================\n", (leader2+1)%servers)
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
-
-	// re-join of last node shouldn't prevent leader from existing.
+        //恢复下线机器，三台服务器同时可用，此时原有leader的状态不应该被影响
 	DPrintf("================ server %d reconnenct!!! ================\n", leader2)
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
