@@ -880,7 +880,10 @@ func TestUnreliableAgree2C(t *testing.T) {
 
 	fmt.Printf("  ... Passed\n")
 }
-
+//针对paper中图8的特殊情况进行测试
+//和TestFigure82C仅有网络可靠与不可靠的差别
+//要求leader不能去commit不是当前term的数据
+//为了说明图2最后log[N].term == currentTerm的必要性！
 func TestFigure8Unreliable2C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, true)
@@ -891,10 +894,12 @@ func TestFigure8Unreliable2C(t *testing.T) {
 	cfg.one(rand.Int()%10000, 1)
 
 	nup := servers
+	//循环测试1000次
 	for iters := 0; iters < 1000; iters++ {
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
+		//随机选择一个leader
 		leader := -1
 		for i := 0; i < servers; i++ {
 			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
@@ -902,7 +907,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 				leader = i
 			}
 		}
-
+		//随机等待一段时间后disconnect（leader）
+		//模拟图8中leader死亡状态
 		if (rand.Int() % 1000) < 100 {
 			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
 			time.Sleep(time.Duration(ms) * time.Millisecond)
@@ -915,7 +921,8 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			cfg.disconnect(leader)
 			nup -= 1
 		}
-
+		//如果nup<3,选举leader时不能成功，
+		//所以随机选择一个没有连接的server置为连接状态
 		if nup < 3 {
 			s := rand.Int() % servers
 			if cfg.connected[s] == false {
@@ -924,13 +931,13 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			}
 		}
 	}
-
+	//循环模拟完成1000次后，将所有的server连接
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
-
+	//再发送一次指令，检查一致性
 	cfg.one(rand.Int()%10000, servers)
 
 	fmt.Printf("  ... Passed\n")
