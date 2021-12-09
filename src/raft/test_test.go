@@ -174,7 +174,7 @@ func TestFailAgree2B(t *testing.T) {
 // 等待2个选举周期，由于大多数follower宕机了，我们不能提交该日志，该日志不应该被现存的follower发现已经提交
 // 恢复follower连接，再给leader添加一条新日志，注意由于宕机的server占大多数，所以新leader可能从宕机的服务器中选出
 // 查看新日志是否被leader添加成功
-// 实现时添加的逻辑是：
+// 实现时要补充的逻辑是：
 // 1、leader在提交日志之前，要先检查大多数server是否收到了该日志
 // 只有超半数的server都收到了该日志，leader才更新提交的日志的索引，并执行对应的日志
 // 所以函数startAppendEntries需要修改，添加leader收到AppendEntries反馈后的检查
@@ -242,7 +242,14 @@ func TestFailNoAgree2B(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 }
 
+// 2B ConcurrentStarts测试的完成逻辑
+// 本测试有五轮迭代，希望在某一次迭代中有如下情况能通过：
+// 向leader启动start添加一条日志，仍是同一个leader再并发地启动五个start添加五条日志
+// 某一次迭代中如果能有一次各个server同步成功就通过测试
+// 实现时只要任期号不频繁变动就没有问题，涉及的是心跳包的间隔时间和重新选举的时间调整
+// 比较work的时间设置是：选举超时: 200ms-400ms, 领导者心跳: 100ms
 func TestConcurrentStarts2B(t *testing.T) {
+	// 新的3个server的raft环境
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -251,6 +258,7 @@ func TestConcurrentStarts2B(t *testing.T) {
 
 	var success bool
 loop:
+	// 五轮迭代测试
 	for try := 0; try < 5; try++ {
 		if try > 0 {
 			// give solution some time to settle
@@ -258,12 +266,13 @@ loop:
 		}
 
 		leader := cfg.checkOneLeader()
+		// 向leader添加一条命令
 		_, term, ok := cfg.rafts[leader].Start(1)
 		if !ok {
 			// leader moved on really quickly
 			continue
 		}
-
+		// 并发再启动5个start命令（并发再向leader添加五条索引）
 		iters := 5
 		var wg sync.WaitGroup
 		is := make(chan int, iters)
@@ -272,6 +281,7 @@ loop:
 			go func(i int) {
 				defer wg.Done()
 				i, term1, ok := cfg.rafts[leader].Start(100 + i)
+				// 希望还是同一个leader
 				if term1 != term {
 					return
 				}
@@ -286,6 +296,7 @@ loop:
 		close(is)
 
 		for j := 0; j < servers; j++ {
+			// 希望leader没有改变
 			if t, _ := cfg.rafts[j].GetState(); t != term {
 				// term changed -- can't expect low RPC counts
 				continue loop
@@ -295,6 +306,7 @@ loop:
 		failed := false
 		cmds := []int{}
 		for index := range is {
+			// 等待各个server提交日志
 			cmd := cfg.wait(index, servers, term)
 			if ix, ok := cmd.(int); ok {
 				if ix == -1 {
@@ -304,6 +316,7 @@ loop:
 					failed = true
 					break
 				}
+				// 统计同步的日志
 				cmds = append(cmds, ix)
 			} else {
 				t.Fatalf("value %v is not an int", cmd)
@@ -327,6 +340,7 @@ loop:
 					ok = true
 				}
 			}
+			// 有cmd没有同步成功
 			if ok == false {
 				t.Fatalf("cmd %v missing in %v", x, cmds)
 			}
@@ -335,7 +349,8 @@ loop:
 		success = true
 		break
 	}
-
+	// 五轮迭代测试里，没有leader一直保持不变的情况
+	// leader换得太频繁了
 	if !success {
 		t.Fatalf("term changed too often")
 	}
