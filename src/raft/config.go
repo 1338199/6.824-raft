@@ -42,6 +42,7 @@ type config struct {
 
 var ncpu_once sync.Once
 
+//make_config,创建N个raft节点的实例，并使他们互相连接
 func make_config(t *testing.T, n int, unreliable bool) *config {
 	ncpu_once.Do(func() {
 		if runtime.NumCPU() < 2 {
@@ -53,12 +54,12 @@ func make_config(t *testing.T, n int, unreliable bool) *config {
 	cfg.t = t
 	cfg.net = labrpc.MakeNetwork()
 	cfg.n = n
-	cfg.applyErr = make([]string, cfg.n)
-	cfg.rafts = make([]*Raft, cfg.n)
-	cfg.connected = make([]bool, cfg.n)
+	cfg.applyErr = make([]string, cfg.n) // 节点的请求的返回信息
+	cfg.rafts = make([]*Raft, cfg.n)// raft节点数组
+	cfg.connected = make([]bool, cfg.n)// 是否连接
 	cfg.saved = make([]*Persister, cfg.n)
-	cfg.endnames = make([][]string, cfg.n)
-	cfg.logs = make([]map[int]int, cfg.n)
+	cfg.endnames = make([][]string, cfg.n)// RPC暴露的接口
+	cfg.logs = make([]map[int]int, cfg.n)// copy of each server's committed entries
 
 	cfg.setunreliable(unreliable)
 
@@ -270,7 +271,7 @@ func (cfg *config) setlongreordering(longrel bool) {
 func (cfg *config) checkOneLeader() int {
 	for iters := 0; iters < 10; iters++ {
 		time.Sleep(500 * time.Millisecond)
-		leaders := make(map[int][]int)
+		leaders := make(map[int][]int)// 分别获取每个节点的状态
 		for i := 0; i < cfg.n; i++ {
 			if cfg.connected[i] {
 				if t, leader := cfg.rafts[i].GetState(); leader {
@@ -280,7 +281,7 @@ func (cfg *config) checkOneLeader() int {
 		}
 
 		lastTermWithLeader := -1
-		for t, leaders := range leaders {
+		for t, leaders := range leaders { //如果多于一个leader 直接退出
 			if len(leaders) > 1 {
 				cfg.t.Fatalf("term %d has %d (>1) leaders", t, len(leaders))
 			}
@@ -293,7 +294,7 @@ func (cfg *config) checkOneLeader() int {
 		}
 	}
 	cfg.t.Fatalf("expected one leader, got none")
-	return -1
+	return -1 //没有leader当然也是错的
 }
 
 // check that everyone agrees on the term.
