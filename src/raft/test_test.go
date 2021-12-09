@@ -843,7 +843,11 @@ func TestFigure82C(t *testing.T) {
 
 	fmt.Printf("  ... Passed\n")
 }
-
+//创建包含5台server的Raft Group(网络为unreliable,
+//unreliable主要体现在RPC请求可能会被推迟或拒绝)
+//50轮迭代, 每轮都要start几个命令,
+// 检查所有命令是否已经正确复制到server上(这里每轮迭代中的expectedServers都设置为1,
+//并没要求所有5个server都包含命令
 func TestUnreliableAgree2C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, true)
@@ -858,12 +862,16 @@ func TestUnreliableAgree2C(t *testing.T) {
 			wg.Add(1)
 			go func(iters, j int) {
 				defer wg.Done()
+				//对于每个连接着的server调用Start。即处理一个新的命令。
+				//如果有leader接受了命令，会返回命令分配的index。
+				//等待一会再用nCommitted来测试index上命令的一致性。
+				//exceptedServers为1表示只要有一个server上实现复制即可
 				cfg.one((100*iters)+j, 1)
 			}(iters, j)
 		}
 		cfg.one(iters, 1)
 	}
-
+	//网络环境设置为不可靠
 	cfg.setunreliable(false)
 
 	wg.Wait()
