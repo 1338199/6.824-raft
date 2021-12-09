@@ -20,7 +20,6 @@ import "sync"
 //使用心跳超时heartbeat timeout机制来触发 Leader 选举
 const RaftElectionTimeout = 1000 * time.Millisecond
 
-
 //2A Election测试的完成逻辑：
 //1、开启3个服务器，检查能否选举出一个leader
 //2、一个leader掉线，看能否选出一个新的leader
@@ -30,7 +29,7 @@ const RaftElectionTimeout = 1000 * time.Millisecond
 //6、恢复下线机器，三台服务器同时可用，此时原有leader的状态不应该被影响
 
 func TestInitialElection2A(t *testing.T) {
-//调用Make启动servers个Raft，创建3个服务器，并互相连接，cfg.n指服务器的个数
+	//调用Make启动servers个Raft，创建3个服务器，并互相连接，cfg.n指服务器的个数
 	servers := 3
 	//make_config，它创建N个raft节点的实例，并使他们互相连接。
 	cfg := make_config(t, servers, false)
@@ -39,13 +38,13 @@ func TestInitialElection2A(t *testing.T) {
 	fmt.Printf("Test (2A): initial election ...\n")
 
 	// is a leader elected?检查是否有leader被选举出来
-	cfg.checkOneLeader()////checkOneLeader，这其实是测试代码的正确性检验的函数，也就是判断当前是否只有一个Leader，这里的GetState函数需要自己去实现，具体实现取决结构体如何设计
+	cfg.checkOneLeader() ////checkOneLeader，这其实是测试代码的正确性检验的函数，也就是判断当前是否只有一个Leader，这里的GetState函数需要自己去实现，具体实现取决结构体如何设计
 
 	// does the leader+term stay the same if there is no network failure?
-        // term：Leader对应的任期
-	term1 := cfg.checkTerms()//查看当前term
-	time.Sleep(2 * RaftElectionTimeout)//等待一段时间
-	term2 := cfg.checkTerms()//检查term是否发生改变（用于检测网络正常情况下是否有乱选举的情况）
+	// term：Leader对应的任期
+	term1 := cfg.checkTerms()           //查看当前term
+	time.Sleep(2 * RaftElectionTimeout) //等待一段时间
+	term2 := cfg.checkTerms()           //检查term是否发生改变（用于检测网络正常情况下是否有乱选举的情况）
 	if term1 != term2 {
 		fmt.Printf("warning: term changed even though there were no failures")
 	}
@@ -60,14 +59,14 @@ func TestReElection2A(t *testing.T) {
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2A): election after network failure ...\n")
-        //一个leader掉线，看能否选出一个新的leader
+	//一个leader掉线，看能否选出一个新的leader
 	leader1 := cfg.checkOneLeader()
 	DPrintf("================ server %d disconnenct!!! ================\n", leader1)
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
-	
-        //旧的leader回归，不应该影响新的leader的状态（当然旧leader迅速被重新选举为leader也没问题）
+
+	//旧的leader回归，不应该影响新的leader的状态（当然旧leader迅速被重新选举为leader也没问题）
 	DPrintf("================ server %d reconnenct!!! ================\n", leader1)
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
@@ -79,11 +78,11 @@ func TestReElection2A(t *testing.T) {
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
-        //恢复一个机器，此时有两个机器。应该选举出一个leader
+	//恢复一个机器，此时有两个机器。应该选举出一个leader
 	DPrintf("================ server %d reconnenct!!! ================\n", (leader2+1)%servers)
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
-        //恢复下线机器，三台服务器同时可用，此时原有leader的状态不应该被影响
+	//恢复下线机器，三台服务器同时可用，此时原有leader的状态不应该被影响
 	DPrintf("================ server %d reconnenct!!! ================\n", leader2)
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
@@ -370,43 +369,64 @@ loop:
 	fmt.Printf("  ... Passed\n")
 }
 
+// 2B Rejoin测试的完成逻辑
+// 将leader的宕机容错处理纳入考虑
+// 1、三台服务器先同步一次
+// 2、断开leader1，同步一次
+// 3、在leader1上添加3个日志项，显然不能成功
+// 4、等新leader选出了，完成一次日志的添加同步
+// 5、又断开leader2，把leader1连回来，完成一次日志的添加同步
+// 6、最后把leader2连回来，完成一次日志的添加同步
+// 要修改的是startAppendEntries函数：
+// 1、首先leader断开了再恢复就会变成follower
+// 2、但是此时旧leader的状态还没改成follower，所以会继续发送心跳包（旧任期号倒是不影响其他follower，不会被接收）
+// 3、但每一次发送心跳包之前还是都检查一下状态，看旧leader的状态有没有变成follower，那就不用再发送心跳包了。
 func TestRejoin2B(t *testing.T) {
+	// 3个server的raft环境
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2B): rejoin of partitioned leader ...\n")
-
+	// 正常执行一次日志添加与同步
 	cfg.one(101, servers)
 
 	// leader network failure
 	leader1 := cfg.checkOneLeader()
 	DPrintf("================ server %d disconnected!!! ================\n", leader1)
+	// 将当前leader，leader1断开
 	cfg.disconnect(leader1)
 
+	// 在leader1上添加3个日志项，显然不能成功
 	// make old leader try to agree on some entries
 	cfg.rafts[leader1].Start(102)
 	cfg.rafts[leader1].Start(103)
 	cfg.rafts[leader1].Start(104)
 
+	// 等新leader选出了，完成一次日志的添加同步
 	// new leader commits, also for index=2
 	cfg.one(103, 2)
 
+	// 又把leader2选出来
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	DPrintf("================ server %d disconnected!!! ================\n", leader2)
 	cfg.disconnect(leader2)
 
+	// 又把leader1连回来
 	// old leader connected again
 	DPrintf("================ server %d reconnected!!! ================\n", leader1)
 	cfg.connect(leader1)
 
+	// 完成一次日志的添加同步
 	cfg.one(104, 2)
 
+	// 又把leader2加回来
 	// all together now
 	DPrintf("================ server %d reconnected!!! ================\n", leader2)
 	cfg.connect(leader2)
 
+	// 又完成一次日志的添加同步
 	cfg.one(105, servers)
 
 	fmt.Printf("  ... Passed\n")

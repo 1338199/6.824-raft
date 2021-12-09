@@ -700,7 +700,7 @@ func (rf *Raft) startAppendEntries() {
 		// 如果某个刚恢复的Follower在心跳到达前开始选举, Leader状态会变为Follower, 更新Term并重新选举
 		rf.mu.Lock()
 		// 常规来说只有状态为leader的raft服务器才能startAppendEntries
-		// 但在FailAgree2B测试中，Leader状态可能会变为Follower
+		// 但在ReJoin2B测试中，Leader状态可能会变为Follower
 		// follower不能发送AppendEntries（heartBeat）
 		if rf.state != Leader {
 			rf.mu.Unlock()
