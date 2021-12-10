@@ -656,28 +656,33 @@ loop:
 }
 
 func TestPersist12C(t *testing.T) {
+	//服务器数量
 	servers := 3
+	//服务器互连，返回cng
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
 
 	fmt.Printf("Test (2C): basic persistence ...\n")
 
+	//发送cmd(内容为11)给集群，并实现同步
 	cfg.one(11, servers)
 
 	// crash and re-start all
 	for i := 0; i < servers; i++ {
 		DPrintf("================ crash and restart %d!!! ================\n", i)
+		//crash服务器i，start或restart服务器i，并检查日志一致性
 		cfg.start1(i)
 	}
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 		cfg.connect(i)
 	}
-
+	//发送cmd(内容为12)给集群，并实现同步
 	cfg.one(12, servers)
 
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
+	//crash服务器leader1，start或restart服务器leader1，并检查日志一致性
 	cfg.start1(leader1)
 	cfg.connect(leader1)
 
@@ -686,6 +691,7 @@ func TestPersist12C(t *testing.T) {
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
 	cfg.one(14, servers-1)
+	//crash服务器leader2，start或restart服务器leader2，并检查日志一致性
 	cfg.start1(leader2)
 	cfg.connect(leader2)
 
@@ -694,6 +700,7 @@ func TestPersist12C(t *testing.T) {
 	i3 := (cfg.checkOneLeader() + 1) % servers
 	cfg.disconnect(i3)
 	cfg.one(15, servers-1)
+	//crash服务器i3，start或restart服务器i3，并检查日志一致性
 	cfg.start1(i3)
 	cfg.connect(i3)
 
@@ -702,6 +709,7 @@ func TestPersist12C(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 }
 
+//相比于TestPersist12C，crash多个服务器并重启检查日志一致性
 func TestPersist22C(t *testing.T) {
 	servers := 5
 	cfg := make_config(t, servers, false)
@@ -843,6 +851,7 @@ func TestFigure82C(t *testing.T) {
 
 	fmt.Printf("  ... Passed\n")
 }
+
 //创建包含5台server的Raft Group(网络为unreliable,
 //unreliable主要体现在RPC请求可能会被推迟或拒绝)
 //50轮迭代, 每轮都要start几个命令,
@@ -880,6 +889,7 @@ func TestUnreliableAgree2C(t *testing.T) {
 
 	fmt.Printf("  ... Passed\n")
 }
+
 //针对paper中图8的特殊情况进行测试
 //和TestFigure82C仅有网络可靠与不可靠的差别
 //要求leader不能去commit不是当前term的数据
