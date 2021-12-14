@@ -126,7 +126,6 @@ func TestBasicAgree2B(t *testing.T) {
 			t.Fatalf("got index %v but expected %v", xindex, index)
 		}
 	}
-
 	fmt.Printf("  ... Passed\n")
 }
 
@@ -537,7 +536,7 @@ func TestBackup2B(t *testing.T) {
 	fmt.Printf("  ... Passed\n")
 }
 
-// 2B BackUp测试的完成逻辑
+// 2B Count测试的完成逻辑
 // 希望在leader的选举，日志的同步中没有产生太频繁（正常情况下，超时无效的 RPC 调用不能过多。）或太少的rpc
 // 只要之前的electionTimeOut，heartBeat间隔设置合理就没有问题
 func TestCount2B(t *testing.T) {
